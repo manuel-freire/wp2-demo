@@ -1,9 +1,11 @@
 #!/bin/bash
 
 #######
-# 
-#  This file is intended to be used within a bare Ubuntu 14.04 docker image
-#  
+#
+#  This file is intended to be run 
+#  - as root,
+#  - within a bare Ubuntu 14.04 docker image
+#
 
 export MAVEN_VERSION="3.3.3"
 export NODE_NUM_VERSION="v0.12.7"
@@ -16,11 +18,11 @@ export KAFKA_NUM_VERSION="0.8.2.1"
 export KAFKA_VERSION="kafka_2.10-0.8.2.1"
 
 export PATH_TO_GLEANER_REALTIME_JAR="/opt/gleaner-realtime/target/realtime-jar-with-dependencies.jar"
-   
+export PATH_TO_L_I_SPACE_WEBAPP="/opt/lostinspace/html/target/webapp"
+
 # used to download sources, executables
 function update_tools {
-    apt-get update && apt-get install -y git wget gcc make openjdk-7-jdk
-    
+    apt-get update && apt-get install -y git wget gcc g++ make openjdk-7-jdk
     cd /opt
     wget http://apache.rediris.es/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz
     tar -xvzf apache-maven-${MAVEN_VERSION}-bin.tar.gz
@@ -33,19 +35,9 @@ function update_with_git {
     git clone https://github.com/$1/$2
     sleep 1s
     cd $2
-    git pull origin master
+    git fetch origin $3
+    git pull origin $3
     sleep 1s
-}
-
-function update_sources {
-    update_with_git RotaruDan OpenLRS
-    update_with_git RotaruDan test-users
-    update_with_git RotaruDan lrs # broken: pangyp!
-    update_with_git gorco gf
-    update_with_git RotaruDan gleaner-realtime
-    update_with_git RotaruDan gleaner-tracker
-    update_with_git RotaruDan lostinspace
-    update_with_git e-ucm xmltools
 }
 
 function update_node {    
@@ -108,86 +100,196 @@ function update_kafka {
     ln -sf /opt/${KAFKA_VERSION}/bin/*.sh /usr/local/bin       
 }
 
-function update_gleaner_realtime {
+function update_gleaner_realtime { # updates .m2 cache
+    update_with_git RotaruDan gleaner-realtime toledo-09-15
     cd /opt/gleaner-realtime
     mvn clean install
 }
 
+function update_openlrs {
+    update_with_git RotaruDan OpenLRS toledo-09-15
+}
+
+# updates .m2 cache; SLOW
 function update_lostinspace {
+    update_with_git RotaruDan lostinspace toledo-09-15
+    update_with_git e-ucm xmltools master
     cd /opt/xmltools
     mvn clean install
     cd /opt/lostinspace
     mvn clean install -Phtml
 }
 
+function update_test_users {
+    update_with_git RotaruDan test-users toledo-09-15
+    npm install
+    npm run fast-setup
+    npm run gen-apidoc
+    npm test
+}
+
+# depends: gleaner-realtime
+function update_lrs { 
+    update_with_git RotaruDan lrs toledo-09-15
+    cd /opt/lrs
+    echo "exports.defaultValues.realtimeJar='${PATH_TO_GLEANER_REALTIME_JAR}';" >> config-values.js 
+    echo "exports.defaultValues.stormPath='/opt/${STORM_VERSION}';" >> config-values.js 
+    npm install
+    npm run fast-setup
+    npm run gen-apidoc
+    npm test
+}
+
+# depends: lost-in-space
+function update_gf {
+    update_with_git gorco gf toledo-09-15
+    cd /opt/gf
+    npm install
+    bower install
+    npm run fast-setup
+
+    mkdir app
+    mkdir app/public
+    rm -rf app/public/lostinspace 
+    cp -r ${PATH_TO_L_I_SPACE_WEBAPP} app/public/lostinspace  
+}
+
 function update_all {
     update_tools
     update_node
+    
     update_mongo
     update_redis
     update_el
     update_storm
     update_zookeeper
     update_kafka
-    update_sources
-    update_gleaner_realtime 
+    
+    update_gleaner_realtime
+    update_openlrs 
+    update_lostinspace
+    update_test_users
+    update_lrs
+    update_gf
 }
 
 function launch_redis {
+    PIDFILE="/opt/redis.pid"
+    LOGFILE="/opt/redis.log"
+    kill $(cat ${PIDFILE})
+
     # in warning shown when launched otherwise
     echo never > /sys/kernel/mm/transparent_hugepage/enabled    
-    redis-server &
+
+    (redis-server > ${LOGFILE} 2>&1 & )
+    PIDS=$!
+    echo -n $PIDS > $PIDFILE
     sleep 2s
+    
+    echo "Launched redis: $PIDS"
 }
 
 function launch_mongo {
+    PIDFILE="/opt/mongo.pid"
+    LOGFILE="/opt/mongo.log"
+    kill $(cat ${PIDFILE})
+
     mkdir /opt/mongoDB
-    mongod --dbpath /opt/mongoDB &
-    sleep 2s    
+    (mongod --dbpath /opt/mongoDB > ${LOGFILE} 2>&1 & )
+    PIDS=$!
+    echo -n $PIDS > $PIDFILE
+    sleep 2s
+    
+    echo "Launched mongo: $PIDS"
 }
 
 function launch_el {
-    /etc/init.d/elasticsearch start
+    /etc/init.d/elasticsearch restart
     sleep 2s    
+    
+    echo "Launched ElasticSearch (via init.d)"
 }
 
 function launch_kafka {
+    PIDFILE="/opt/kafka.pid"
+    LOGFILE="/opt/kafka.log"
+    kill $(cat ${PIDFILE})
+    
     cd /opt/${KAFKA_VERSION}
-    bin/kafka-server-start.sh config/server.properties &
+    (bin/kafka-server-start.sh config/server.properties > ${LOGFILE} 2>&1 & )
+    PIDS=$!
+    echo -n $PIDS > $PIDFILE
     sleep 2s
+    
+    echo "Launched kafka: $PIDS"
 }
 
 function launch_zookeeper {
-    zkServer.sh start &
+    PIDFILE="/opt/zookeeper.pid"
+    LOGFILE="/opt/zookeeper.log"
+    kill $(cat ${PIDFILE})
+
+    (zkServer.sh start > ${LOGFILE} 2>&1 & )
+    PIDS=$!
+    echo -n $PIDS > $PIDFILE
     sleep 2s
+
+    echo "Launched zookeeper: $PIDS"
 }
 
 function launch_storm {
-    storm nimbus &
+    PIDFILE="/opt/storm.pid"
+    kill $(cat ${PIDFILE})
+    
+    LOGFILE="/opt/storm_nimbus.log"
+    (storm nimbus > ${LOGFILE} 2>&1 & )
+    PIDS=$!
+    echo -n "$PIDS " > $PIDFILE
     sleep 2s
-    storm supervisor &
+    
+    LOGFILE="/opt/storm_supervisor.log"
+    (storm supervisor > ${LOGFILE} 2>&1 & )
+    PIDS=$!
+    echo -n "$PIDS " > $PIDFILE
     sleep 2s
-    storm ui &
+    
+    LOGFILE="/opt/storm_ui.log"
+    (storm ui > ${LOGFILE} 2>&1 & )
+    PIDS=$!
+    echo -n "$PIDS " > $PIDFILE
     sleep 2s
+    
+    echo "Launched storm: $PIDS"
 }
 
 function launch_openlrs {
-    cd /opt/OpenLRS/src/main/resources
-    echo "spring.profiles.include: redis,elasticsearch" > application-dev.properties
-    echo "openlrs.tierOneStorage=RedisPubSubTierOneStorage" >> application-dev.properties
-    echo "openlrs.tierTwoStorage=XApiOnlyElasticsearchTierTwoStorage" >> application-dev.properties
+    PIDFILE="/opt/openlrs.pid"
+    LOGFILE="/opt/openlrs.log"
+    kill $(cat ${PIDFILE})
+
     cd /opt/OpenLRS
-    mvn clean package spring-boot:run  -Drun.jvmArguments="-Dspring.config.location=./application-dev.properties" &
-    sleep 2s
+    chmod 0755 run.sh
+    (./run.sh > ${LOGFILE} 2>&1 & )
+    echo "Waiting for OpenLRS..."
+    sleep 20s
+
+    PIDS="$(ps -Af | grep OpenLRS | tr -s " " "|" | cut -d "|" -f 2 | head -n 2 | xargs)"
+    echo -n $PIDS > $PIDFILE
+    echo "Launched OpenLRS: $PIDS"
 }
 
 function launch_node {
+    PIDFILE="/opt/$1.pid"
+    LOGFILE="/opt/$1.log"
+    kill $(cat ${PIDFILE})
+    
     cd /opt/$1
-    npm install
-    npm run fast-setup
-    npm run gen-apidoc
-    npm start &
+    (npm start > ${LOGFILE} 2>&1 & )
+    PIDS=$!
     sleep 2s
+
+    echo -n $PIDS > $PIDFILE
+    echo "Launched $1 via Node: $PIDS"
 }
 
 function launch_test_users {
@@ -195,26 +297,11 @@ function launch_test_users {
 }
 
 function launch_lrs {
-    cd /opt/lrs
-    echo "exports.defaultValues.realtimeJar='${PATH_TO_GLEANER_REALTIME_JAR}';" >> config-values.js 
-    echo "exports.defaultValues.stormPath='/opt/${STORM_VERSION}';" >> config-values.js 
-
-    # y ahora falta copiar aqui el LostInSpace
-
     launch_node lrs    
 }
 
 function launch_gf {
     launch_node gf
-}
-
-function launch_gf {
-    cd /opt/gf
-    npm install
-    bower install
-    npm run fast-setup
-    npm start &
-    sleep 2s
 }
 
 function launch_all {
@@ -224,7 +311,8 @@ function launch_all {
     launch_el
     launch_storm     # 8081 + internal
     launch_kafka
+
     launch_openlrs   # 3000 ; also :3000/api
-    launch_lrs       # 3300 ; errores
+    launch_lrs       # 3300 ;
     launch_gf        # 3350
 }
