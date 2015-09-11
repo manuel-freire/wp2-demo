@@ -6,6 +6,10 @@
 #  - as root,
 #  - within a bare Ubuntu 14.04 docker image
 #
+#  To launch into the image, use
+#    sudo docker run -p 3000:3000 -p 3350:3350 -it ubuntu:14.04 /bin/bash
+#
+#
 
 export MAVEN_VERSION="3.3.3"
 export NODE_NUM_VERSION="v0.12.7"
@@ -22,7 +26,7 @@ export PATH_TO_L_I_SPACE_WEBAPP="/opt/lostinspace/html/target/webapp"
 
 # used to download sources, executables
 function update_tools {
-    apt-get update && apt-get install -y git wget gcc g++ make openjdk-7-jdk
+    apt-get update && apt-get install -y nano git wget gcc g++ make openjdk-7-jdk
     cd /opt
     wget http://apache.rediris.es/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz
     tar -xvzf apache-maven-${MAVEN_VERSION}-bin.tar.gz
@@ -47,6 +51,7 @@ function update_node {
     tar -xvzf /tmp/${NODE_VERSION}.tar.gz
     cd /
     ln -sf /opt/${NODE_VERSION}/bin/* /usr/local/bin
+    npm install -g bower
 }
 
 function update_mongo {
@@ -125,7 +130,7 @@ function update_test_users {
     npm install
     npm run fast-setup
     npm run gen-apidoc
-    npm test
+    npm test # requires redis, mongo running
 }
 
 # depends: gleaner-realtime
@@ -133,11 +138,11 @@ function update_lrs {
     update_with_git RotaruDan lrs toledo-09-15
     cd /opt/lrs
     echo "exports.defaultValues.realtimeJar='${PATH_TO_GLEANER_REALTIME_JAR}';" >> config-values.js 
-    echo "exports.defaultValues.stormPath='/opt/${STORM_VERSION}';" >> config-values.js 
+    echo "exports.defaultValues.stormPath='/opt/${STORM_VERSION}/bin';" >> config-values.js 
     npm install
     npm run fast-setup
     npm run gen-apidoc
-    npm test
+    npm test # requires redis, mongo running
 }
 
 # depends: lost-in-space
@@ -145,13 +150,27 @@ function update_gf {
     update_with_git gorco gf toledo-09-15
     cd /opt/gf
     npm install
-    bower install
+    bower --allow-root install
     npm run fast-setup
 
     mkdir app
     mkdir app/public
     rm -rf app/public/lostinspace 
     cp -r ${PATH_TO_L_I_SPACE_WEBAPP} app/public/lostinspace  
+    cd app/public/
+    wget https://dl.dropboxusercontent.com/u/3300634/inboxed.tar.gz
+    tar -xvzf inboxed.tar.gz
+    mv webapp inboxed
+}
+
+# front and back-ends for emotions
+function update_emo {
+    update_with_git gorco emoB master
+    cd /opt/emoB
+    npm install
+    update_with_git gorco emoF master
+    cd /opt/emoF
+    npm install
 }
 
 function update_all {
@@ -171,6 +190,7 @@ function update_all {
     update_test_users
     update_lrs
     update_gf
+    update_emo
 }
 
 function launch_redis {
@@ -229,7 +249,8 @@ function launch_zookeeper {
     LOGFILE="/opt/zookeeper.log"
     kill $(cat ${PIDFILE})
 
-    (zkServer.sh start > ${LOGFILE} 2>&1 & )
+    cd /opt/${ZOOKEEPER_VERSION}/bin
+    (./zkServer.sh start > ${LOGFILE} 2>&1 & )
     PIDS=$!
     echo -n $PIDS > $PIDFILE
     sleep 2s
@@ -304,6 +325,11 @@ function launch_gf {
     launch_node gf
 }
 
+function launch_emo {
+    launch_node emoB 
+    launch_node emoF
+}
+
 function launch_all {
     launch_zookeeper # 
     launch_redis
@@ -312,7 +338,10 @@ function launch_all {
     launch_storm     # 8081 + internal
     launch_kafka
 
-    launch_openlrs   # 3000 ; also :3000/api
-    launch_lrs       # 3300 ;
-    launch_gf        # 3350
+    launch_openlrs     # 8080
+    launch_test_users  # 3000 ; also :3000/api
+    launch_lrs         # 3300 ;
+    launch_gf          # 3350
+    
+    launch_emo         # 3111 (frontend); 3232 (be)
 }
