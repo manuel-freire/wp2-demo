@@ -1,0 +1,120 @@
+There are 3 apps
+
+- The API (SDAa)
+  http://localhost:3000/api
+  (npm: test-users)
+  
+- The tracking server (SISA)
+  http://localhost:3350/signup
+  (npm: gf)
+  
+- The emotions server
+  [to be completed]
+
+===
+
+- We are first going to set up things in the AAPI:
+
+  + register
+    http://localhost:3000/login
+    root 
+    root
+
+  + add the apps
+    add the gleaner back-end (SISA, T2.1b)
+    (use App1 in Text-Area mode)
+    http://localhost:3000/applications
+
+- Now we want to have some users; we will register
+  them via SISA - but they will be role-less until
+  SDA intervenes
+
+    + a developer,
+    + a teacher
+    + a student
+
+    (* must logout+login to refresh auth!)
+
+    + so we register via
+
+    http://localhost:3350/signup
+
+- So we give them some roles
+  (The roles were created when registering the apps)
+  
+  http://localhost:3000/applications
+  + dev is developer
+  + stu is student
+  + tea is teacher
+  
+- The developer logs in to register a new game
+
+    http://localhost:3350/login
+    
+    When created, the new game is assigned a trackingcode
+    It must be sent when tracking
+    
+    In our particular case, we expect a 
+    track.txt file with the following format
+    nano /opt/gf/app/public/lostinspace/assets/track.txt
+
+- The developer chooses traces to send, what 
+  teachers will see the traces
+  (realtime analytics model)
+  
+  + sets the link
+  
+  (* use actual public IP here!)
+    http://localhost:3350/lostinspace/index.html
+  
+  + sets session information
+  
+    Alias=this.var.username ? this.var.username : this.var.nickname
+    Score=this.var.score
+    Max Score=10000
+    Progress=this.var.phase / 13
+
+  + warnings and alerts are conditions
+
+    this.var.inactivity > 60
+    this.var.xml_invalid /Maximum difference/ 5
+
+- this is different for another game, "inboxed"
+  
+    this.var['name']
+    this.var['_score']
+    20000
+    (this.zone.startsWith('day') ? parseInt(this.zone.substring(3)) : 0) / 5
+
+    In Splash Screen Condition:
+    this.zone === "splash"
+    
+- now, on the AA API, we set up the experiment
+  as Teacher
+  
+  + log out and in (tea/tea)
+  + pick game
+  
+    o lostinspace
+    (* may have to reload page to avoid storm errors)
+    + launch storm topology
+    + add stu as student
+    
+    o inboxed
+    (* may have to reload page to avoid storm errors)
+    + launch storm topology
+    + add stu as student
+    
+- now, on the CITA, stu logs in...
+
+  + (* may have to press enter on url for redirect to catch)
+
+====
+
+To look at low-level results, do
+
+mongo
+show dbs
+use lrs
+show collections
+db.games.find().pretty()
