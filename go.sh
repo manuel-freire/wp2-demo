@@ -1,14 +1,42 @@
 #!/bin/bash
 
 #######
+#  This file contains instructions to build the demo environment
+#  from source
 #
-#  This file is intended to be run 
 #  - as root,
 #  - within a bare Ubuntu 14.04 docker image
 #
-#  To launch into the image, use
-#    sudo docker run -p 3000:3000 -p 3350:3350 -it ubuntu:14.04 /bin/bash
+#  1. To launch into the bare image, use
+#    sudo docker run -p 3000:3000 -p 3350:3350 -p 3111:3111 -p 8080:8080 -it ubuntu:14.04 /bin/bash
 #
+#  2. Copy and paste this entire file into the prompt
+#
+#  3. Run one by one all the update functions except update_all
+#     (or run only update_all)
+#     This step requires downloading around 500M, and
+#     some pretty heavy compilation.
+#
+#  4. Optional. Save your work so steps 1-3 need not be repeated:
+#     - exit the image: execute 'exit'
+#     - save the image: execute 'sudo docker clone <id> <name>'
+#       (use 'sudo docker ps -a' to find its <id>)
+#     - re-start the image: 
+#       sudo docker run -p 3000:3000 -p 3350:3350 -p 3111:3111 -p 8080:8080 -it <name> /bin/bash
+#
+#  5. Launch supporting servers
+#     - launch_redis && launch_mongo && launch_el
+#     - launch_zookeeper
+#     - launch_kafka
+#     - launch_storm
+#     - launch_openlrs
+#
+#  6. Launch WP2 servers, one by one
+#     - launch_openlrs
+#     - launch_test_users
+#     - launch_lrs
+#     - launch_gf
+#     - launch_emo
 #
 
 export MAVEN_VERSION="3.3.3"
@@ -52,6 +80,18 @@ function update_node {
     cd /
     ln -sf /opt/${NODE_VERSION}/bin/* /usr/local/bin
     npm install -g bower
+}
+
+function scriptify { # name dir commands...
+    TARGET=/opt/${1}.sh
+    shift
+    cd /opt
+    echo "#! /bin/bash" > $TARGET
+    echo cd $1 >> $TARGET
+    shift 
+    echo "$@" >> $TARGET
+    cd /opt
+    chmod 0755 $TARGET
 }
 
 function update_mongo {
@@ -130,7 +170,8 @@ function update_test_users {
     npm install
     npm run fast-setup
     npm run gen-apidoc
-    npm test # requires redis, mongo running
+   # npm test # requires redis, mongo running
+    scriptify test-users test-users npm start
 }
 
 # depends: gleaner-realtime
@@ -142,7 +183,8 @@ function update_lrs {
     npm install
     npm run fast-setup
     npm run gen-apidoc
-    npm test # requires redis, mongo running
+   # npm test # requires redis, mongo running
+    scriptify lrs lrs npm start
 }
 
 # depends: lost-in-space
@@ -161,6 +203,7 @@ function update_gf {
     wget https://dl.dropboxusercontent.com/u/3300634/inboxed.tar.gz
     tar -xvzf inboxed.tar.gz
     mv webapp inboxed
+    scriptify gf gf npm start
 }
 
 # front and back-ends for emotions
@@ -168,9 +211,12 @@ function update_emo {
     update_with_git gorco emoB master
     cd /opt/emoB
     npm install
+    scriptify emoB emoB npm start
+
     update_with_git gorco emoF master
     cd /opt/emoF
     npm install
+    scriptify emoF emoF npm start
 }
 
 function update_all {
@@ -193,6 +239,12 @@ function update_all {
     update_emo
 }
 
+function get_pids { # $! is broken in docker
+    ps -Af | grep $1 \
+    | tr -s " " "|" | cut -d "|" -f 2 | head -n -1 \
+    | xargs
+}
+
 function launch_redis {
     PIDFILE="/opt/redis.pid"
     LOGFILE="/opt/redis.log"
@@ -202,11 +254,12 @@ function launch_redis {
     echo never > /sys/kernel/mm/transparent_hugepage/enabled    
 
     (redis-server > ${LOGFILE} 2>&1 & )
-    PIDS=$!
+    sleep 4s
+    PIDS=$(get_pids redis)
     echo -n $PIDS > $PIDFILE
-    sleep 2s
     
     echo "Launched redis: $PIDS"
+    cd /opt
 }
 
 function launch_mongo {
@@ -216,17 +269,16 @@ function launch_mongo {
 
     mkdir /opt/mongoDB
     (mongod --dbpath /opt/mongoDB > ${LOGFILE} 2>&1 & )
-    PIDS=$!
+    sleep 4s
+    PIDS=$(get_pids mongod)
     echo -n $PIDS > $PIDFILE
-    sleep 2s
     
     echo "Launched mongo: $PIDS"
+    cd /opt    
 }
 
 function launch_el {
     /etc/init.d/elasticsearch restart
-    sleep 2s    
-    
     echo "Launched ElasticSearch (via init.d)"
 }
 
@@ -237,11 +289,12 @@ function launch_kafka {
     
     cd /opt/${KAFKA_VERSION}
     (bin/kafka-server-start.sh config/server.properties > ${LOGFILE} 2>&1 & )
-    PIDS=$!
+    sleep 4s
+    PIDS=$(get_pids kafka_2)
     echo -n $PIDS > $PIDFILE
-    sleep 2s
     
     echo "Launched kafka: $PIDS"
+    cd /opt
 }
 
 function launch_zookeeper {
@@ -251,11 +304,12 @@ function launch_zookeeper {
 
     cd /opt/${ZOOKEEPER_VERSION}/bin
     (./zkServer.sh start > ${LOGFILE} 2>&1 & )
-    PIDS=$!
+    sleep 4s
+    PIDS=$(get_pids zookeeper)
     echo -n $PIDS > $PIDFILE
-    sleep 2s
 
     echo "Launched zookeeper: $PIDS"
+    cd /opt
 }
 
 function launch_storm {
@@ -264,23 +318,24 @@ function launch_storm {
     
     LOGFILE="/opt/storm_nimbus.log"
     (storm nimbus > ${LOGFILE} 2>&1 & )
-    PIDS=$!
+    PIDS=$(get_pids nimbus)
     echo -n "$PIDS " > $PIDFILE
     sleep 2s
     
     LOGFILE="/opt/storm_supervisor.log"
     (storm supervisor > ${LOGFILE} 2>&1 & )
-    PIDS=$!
-    echo -n "$PIDS " > $PIDFILE
+    PIDS=$(get_pids supervisor)
+    echo -n "$PIDS " >> $PIDFILE
     sleep 2s
     
     LOGFILE="/opt/storm_ui.log"
     (storm ui > ${LOGFILE} 2>&1 & )
-    PIDS=$!
-    echo -n "$PIDS " > $PIDFILE
+    PIDS=$(get_pids .ui)
+    echo -n "$PIDS " >> $PIDFILE
     sleep 2s
     
     echo "Launched storm: $PIDS"
+    cd /opt
 }
 
 function launch_openlrs {
@@ -290,13 +345,13 @@ function launch_openlrs {
 
     cd /opt/OpenLRS
     chmod 0755 run.sh
+    echo "Warning - this takes a long time to start (~1m)"
     (./run.sh > ${LOGFILE} 2>&1 & )
-    echo "Waiting for OpenLRS..."
-    sleep 20s
-
-    PIDS="$(ps -Af | grep OpenLRS | tr -s " " "|" | cut -d "|" -f 2 | head -n 2 | xargs)"
+    sleep 4s
+    PIDS=$(get_pids openlrs)
     echo -n $PIDS > $PIDFILE
     echo "Launched OpenLRS: $PIDS"
+    cd /opt
 }
 
 function launch_node {
@@ -304,13 +359,13 @@ function launch_node {
     LOGFILE="/opt/$1.log"
     kill $(cat ${PIDFILE})
     
-    cd /opt/$1
-    (npm start > ${LOGFILE} 2>&1 & )
-    PIDS=$!
-    sleep 2s
+    (./$1.sh > ${LOGFILE} 2>&1 & )
+    sleep 4s
+    PIDS=$(get_pids $1.sh)
 
     echo -n $PIDS > $PIDFILE
     echo "Launched $1 via Node: $PIDS"
+    cd /opt
 }
 
 function launch_test_users {
@@ -330,6 +385,9 @@ function launch_emo {
     launch_node emoF
 }
 
+# WARNING - this is for reference; do not execute directly
+# as services take a while to start, and some require others
+# to be running to start properly
 function launch_all {
     launch_zookeeper # 
     launch_redis
@@ -344,4 +402,8 @@ function launch_all {
     launch_gf          # 3350
     
     launch_emo         # 3111 (frontend); 3232 (be)
+}
+
+function log {
+    tail -n 100 -f $1
 }
